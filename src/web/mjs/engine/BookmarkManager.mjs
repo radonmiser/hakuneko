@@ -236,6 +236,14 @@ export default class BookmarkManager extends EventTarget {
                 // Create a Manga instance
                 const mangaInstance = new Manga(connector, bookmark.key.manga, bookmark.title.manga);
 
+                // Populate existingChapters on mangaInstance before fetching source chapters
+                try {
+                    mangaInstance.existingChapters = await Engine.Storage.getExistingChapterTitles(mangaInstance);
+                } catch (storageError) {
+                    console.warn(`Could not retrieve existing chapter titles for "${mangaInstance.title}". Assuming no chapters are downloaded for this manga. Error:`, storageError);
+                    mangaInstance.existingChapters = {}; // Default to empty if error (e.g. manga folder does not exist)
+                }
+
                 // Pass mangaInstance to _getChapters.
                 const sourceChaptersRaw = await connector._getChapters(mangaInstance);
 
