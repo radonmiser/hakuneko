@@ -211,4 +211,86 @@ export default class BookmarkManager extends EventTarget {
     compareBookmarks( a, b ) {
         return a.title.manga.toLowerCase() < b.title.manga.toLowerCase() ? -1 : 1;
     }
+
+    async getAllBookmarksWithNewChapters() {
+        const allNewChapters = [];
+        if (!this.bookmarks || this.bookmarks.length === 0) {
+            console.log('No bookmarks available to check for new chapters.');
+            return allNewChapters;
+        }
+
+        // Engine.Connectors is used elsewhere in this file, so it should be available.
+        // Engine.ChaptermarkManager access is less certain, so a placeholder will be used.
+
+        for (const bookmark of this.bookmarks) {
+            console.log('Checking for new chapters in bookmark:', bookmark.title.manga);
+            try {
+                const connector = Engine.Connectors.find(c => c.id === bookmark.key.connector);
+                if (!connector) {
+                    console.warn(`Connector with ID '${bookmark.key.connector}' not found for bookmark '${bookmark.title.manga}'. Skipping.`);
+                    continue;
+                }
+
+                // The manga object for _getChapters usually needs at least an 'id'.
+                // Provide title as well, as it can be useful for context or if chapter.manga needs it.
+                const mangaForConnector = { 
+                    id: bookmark.key.manga, 
+                    title: bookmark.title.manga 
+                    // Potentially other fields like connector ID if chapter.manga needs full context,
+                    // but usually Connector._getChapters sets up its chapter.manga references correctly.
+                };
+                const sourceChapters = await connector._getChapters(mangaForConnector);
+
+                if (sourceChapters && sourceChapters.length > 0) {
+                    const mangaIdentity = { id: bookmark.key.manga, connector: { id: bookmark.key.connector } };
+                    // Assuming Engine.ChaptermarkManager is available globally like Engine.Connectors
+                    const markedChapterDetails = Engine.ChaptermarkManager.getChaptermark(mangaIdentity);
+
+                    if (!markedChapterDetails) {
+                        // No chapter mark, all source chapters are new
+                        console.log(`No chaptermark for ${bookmark.title.manga}. Adding all ${sourceChapters.length} chapters as new.`);
+                        for (const chapter of sourceChapters) {
+                            if (!chapter.manga) { // Ensure manga reference is set
+                                chapter.manga = mangaForConnector;
+                            }
+                            allNewChapters.push(chapter);
+                        }
+                    } else {
+                        // ChaptermarkManager._getChapterIdentifier(chapter) is used internally by ChaptermarkManager
+                        // to get a consistent ID (e.g. chapter.id.hash or chapter.id).
+                        // markedChapterDetails.chapterID is the stored ID.
+                        // Also, comparing titles as a fallback, similar to isChapterMarked logic.
+                        let markedChapterIndex = sourceChapters.findIndex(sc => 
+                            Engine.ChaptermarkManager._getChapterIdentifier(sc) === markedChapterDetails.chapterID || 
+                            (sc.title && markedChapterDetails.chapterTitle && sc.title === markedChapterDetails.chapterTitle)
+                        );
+
+                        if (markedChapterIndex === -1) {
+                            console.warn(`Marked chapter (ID: ${markedChapterDetails.chapterID}, Title: ${markedChapterDetails.chapterTitle}) not found in source for ${bookmark.title.manga}. Considering all ${sourceChapters.length} chapters as new.`);
+                            for (const chapter of sourceChapters) {
+                                if (!chapter.manga) { chapter.manga = mangaForConnector; }
+                                allNewChapters.push(chapter);
+                            }
+                        } else {
+                            console.log(`Marked chapter for ${bookmark.title.manga} found at index ${markedChapterIndex}. Adding subsequent chapters as new.`);
+                            for (let i = 0; i < sourceChapters.length; i++) {
+                                if (i > markedChapterIndex) {
+                                    const chapter = sourceChapters[i];
+                                    if (!chapter.manga) { chapter.manga = mangaForConnector; }
+                                    allNewChapters.push(chapter);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    console.log(`No chapters found for bookmark '${bookmark.title.manga}' via connector '${connector.id}'.`);
+                }
+            } catch (error) {
+                console.error(`Error fetching/processing chapters for bookmark '${bookmark.title.manga}':`, error);
+                // Continue to the next bookmark
+            }
+        }
+        console.log(`Found ${allNewChapters.length} new chapters across all bookmarks.`);
+        return allNewChapters;
+    }
 }

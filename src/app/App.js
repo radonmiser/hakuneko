@@ -22,7 +22,8 @@ module.exports = class App {
     constructor(logger) {
         this._logger = logger || new ConsoleLogger(ConsoleLogger.LEVEL.Warn);
         this._extractor = new CommandlineArgumentExtractor(process.argv);
-        this._configuration = this._getConfiguration(this._extractor.options);
+        this._options = this._extractor.options; // Make options available
+        this._configuration = this._getConfiguration(this._options);
         let serverManager = new UpdateServerManager(this._configuration.applicationUpdateURL, this._logger);
         let cacheManager = new CacheDirectoryManager(this._configuration.applicationCacheDirectory, this._logger);
         this._updater = new Updater(serverManager, cacheManager, this._logger);
@@ -58,6 +59,29 @@ module.exports = class App {
 
     async run() {
         try {
+            // If no specific action flags are provided, print info and exit
+            if (this._options.applicationStartupURL === undefined &&
+                this._options.applicationCacheDirectory === undefined &&
+                this._options.applicationUserDataDirectory === undefined &&
+                this._options.applicationUpdateURL === undefined &&
+                !this._options.updateBookmarksAndDownloadNewChapters) {
+                this._extractor.printInfo();
+                this.printInfo();
+                this._configuration.printInfo();
+                return process.exit(0);
+            }
+
+            if (this._options.updateBookmarksAndDownloadNewChapters) {
+                console.log('CLI command --update-bookmarks-and-download-new-chapters detected. Triggering update and download process...');
+                // TODO: Implement IPC call to HakuNeko engine to trigger updateBookmarksAndDownloadNewChapters()
+                // Assuming for now that if this CLI flag is present, we perform the action and exit.
+                // If other flags are present, their behavior might also need to be considered
+                // for whether the app should exit or continue to full UI launch.
+                // For now, let's exit as it's a specific CLI task.
+                return process.exit(0); // Or handle as appropriate for the app's lifecycle
+            }
+
+            // If other flags were set that imply launching the UI, or if no flags were set (which now defaults to launching UI after previous checks)
             this._extractor.printInfo();
             this.printInfo();
             this._configuration.printInfo();

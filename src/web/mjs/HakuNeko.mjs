@@ -100,4 +100,33 @@ export default class HakuNeko {
     get Version() {
         return this._version;
     }
+
+    async updateBookmarksAndDownloadNewChapters() {
+        try {
+            console.log('Starting process to update bookmarks and download new chapters...');
+            // _bookmarkManager is initialized in the constructor
+            const newChapters = await this._bookmarkManager.getAllBookmarksWithNewChapters();
+
+            console.log(`Found ${newChapters.length} new chapters to download.`);
+
+            if (newChapters && newChapters.length > 0) {
+                for (const chapter of newChapters) {
+                    // Ensure chapter object is valid and has necessary details for DownloadManager
+                    // The manga property should be attached by getAllBookmarksWithNewChapters
+                    if (chapter && chapter.manga && chapter.manga.title && chapter.title) {
+                        console.log(`Queuing for download: ${chapter.manga.title} - ${chapter.title}`);
+                        // _downloadManager is initialized in the constructor
+                        this._downloadManager.addDownload(chapter);
+                    } else {
+                        console.warn('Skipping invalid or incomplete chapter object:', chapter);
+                    }
+                }
+                console.log('All new chapters have been queued for download.');
+            } else {
+                console.log('All bookmarks are up-to-date. No new chapters to download.');
+            }
+        } catch (error) {
+            console.error('Error during updateBookmarksAndDownloadNewChapters:', error);
+        }
+    }
 }
