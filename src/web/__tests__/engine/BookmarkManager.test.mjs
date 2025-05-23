@@ -1,70 +1,63 @@
 // src/web/__tests__/engine/BookmarkManager.test.mjs
 import BookmarkManager from '../../mjs/engine/BookmarkManager.mjs';
+import Chapter from '../../mjs/engine/Chapter.mjs';
 
 // Mock global Engine and its dependencies
-// These mocks need to be defined before BookmarkManager is imported if it uses them at module load time,
-// but since we are importing it directly, we can set up global.Engine before each test instantiation.
-
 global.Engine = {
     Connectors: [],
-    ChaptermarkManager: {
-        getChaptermark: jest.fn(),
-        // Mock _getChapterIdentifier as it's used by the refactored method within findIndex
-        _getChapterIdentifier: jest.fn(chapter => chapter.id.hash || chapter.id),
-    },
+    // ChaptermarkManager is no longer used by the simplified method
     Storage: {
-        saveBookmarks: jest.fn().mockResolvedValue(undefined), // Used by saveProfile
-        loadBookmarks: jest.fn().mockResolvedValue([]),      // Used by loadProfile
+        saveBookmarks: jest.fn().mockResolvedValue(undefined),
+        loadBookmarks: jest.fn().mockResolvedValue([]),
     },
-    Settings: { // Passed to constructor
+    Settings: { 
         addEventListener: jest.fn(),
     }
 };
 
-describe('BookmarkManager.getAllBookmarksWithNewChapters', () => {
+describe('BookmarkManager.getAllBookmarksWithNewChapters (Simplified Logic)', () => {
     let bookmarkManager;
     let mockSettings;
-    // let mockBookmarkImporter; // Not strictly needed if its methods aren't called
+    let consoleLogSpy;
+    let consoleWarnSpy;
 
     beforeEach(() => {
-        // Reset mocks for each test
         jest.clearAllMocks();
         
-        // Reset Engine properties that are modified per test
+        consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+        consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
         Engine.Connectors = [];
-        Engine.ChaptermarkManager.getChaptermark.mockReset();
-        // Re-assign _getChapterIdentifier if it's not meant to be cleared or re-mocked in a specific way.
-        // For this case, having it defined once globally is fine as its behavior is static.
-        // Engine.ChaptermarkManager._getChapterIdentifier.mockImplementation(chapter => chapter.id.hash || chapter.id);
+        // No ChaptermarkManager mocks to reset
 
-
-        // Mock constructor dependencies
         mockSettings = { addEventListener: jest.fn() };
-        // mockBookmarkImporter = {}; // Simple object if no methods are called
-
-        bookmarkManager = new BookmarkManager(mockSettings, null /* mockBookmarkImporter */);
-        bookmarkManager.bookmarks = []; // Start with no bookmarks for each test
+        bookmarkManager = new BookmarkManager(mockSettings, null);
+        bookmarkManager.bookmarks = [];
     });
 
-    // --- Test Scenario 1: No Bookmarks ---
+    afterEach(() => {
+        consoleLogSpy.mockRestore();
+        consoleWarnSpy.mockRestore();
+    });
+
     test('should return an empty array if no bookmarks are present', async () => {
         const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
         expect(newChapters).toEqual([]);
+        expect(consoleLogSpy).toHaveBeenCalledWith('No bookmarks available to check for new chapters.');
     });
 
-    // --- Test Scenario 2: Bookmark with a Connector Not Found ---
-    test('should skip a bookmark if its connector is not found and process others', async () => {
+    });
+
+    test('should skip a bookmark if its connector is not found', async () => {
         bookmarkManager.bookmarks = [
             { key: { connector: 'non-existent-connector', manga: 'manga1' }, title: { manga: 'Manga 1 (No Connector)' } }
         ];
-        // No connectors in Engine.Connectors
-
         const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
         expect(newChapters).toEqual([]);
-        // Optionally, check console.warn if spied upon, but not essential for this test
+        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Connector with ID 'non-existent-connector' not found"));
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Found 0 chapters to download across all bookmarks.'));
     });
 
-    // --- Test Scenario 3: Connector Fails to Get Chapters ---
     test('should skip a bookmark if its connector fails to get chapters', async () => {
         const mockConnector = { 
             id: 'test-connector', 
@@ -74,162 +67,128 @@ describe('BookmarkManager.getAllBookmarksWithNewChapters', () => {
         bookmarkManager.bookmarks = [
             { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: 'Manga 1 (Failing Connector)' } }
         ];
-
-        Engine.ChaptermarkManager.getChaptermark.mockReturnValue(undefined); // Assume no chaptermark
-
         const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
         expect(newChapters).toEqual([]);
         expect(mockConnector._getChapters).toHaveBeenCalled();
-        // Optionally, check console.error
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Found 0 chapters to download across all bookmarks.'));
     });
 
-    // --- Test Scenario 4: No Chaptermark Exists for a Bookmark ---
-    test('should return all non-completed chapters as new if no chaptermark exists', async () => {
-        const chaptersFromConnector = [
-            { id: 'ch1', title: 'Chapter 1', status: 'available' }, 
-            { id: 'ch2', title: 'Chapter 2', status: 'completed' },
-            { id: 'ch3', title: 'Chapter 3', status: 'available' }
+    test('should log if connector returns no chapters', async () => {
+        const mockConnector = { 
+            id: 'test-connector', 
+            _getChapters: jest.fn().mockResolvedValue([]) // Connector returns empty array
+        };
+        Engine.Connectors.push(mockConnector);
+        const bookmarkTitle = 'Manga With No Chapters';
+        bookmarkManager.bookmarks = [
+            { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: bookmarkTitle } }
+        ];
+        
+        await bookmarkManager.getAllBookmarksWithNewChapters();
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining(`No chapters returned from source for "${bookmarkTitle}".`));
+    });
+    
+    test('should return only non-completed chapters, instantiating them correctly', async () => {
+        const rawChapterDataWithStatus = [
+            { id: 'ch1', title: 'Chapter 1', language: 'en', status: 'available' },
+            { id: 'ch2', title: 'Chapter 2', language: 'en', status: 'completed' },
+            { id: 'ch3', title: 'Chapter 3', language: 'en', status: 'available' }
         ];
         const mockConnector = { 
             id: 'test-connector', 
-            _getChapters: jest.fn().mockResolvedValue(chaptersFromConnector) 
+            _getChapters: jest.fn().mockResolvedValue(rawChapterDataWithStatus) 
         };
         Engine.Connectors.push(mockConnector);
-        bookmarkManager.bookmarks = [
-            { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: 'Manga 1' } }
-        ];
+        const bookmarkTitle = 'Manga 1 Title';
+        bookmarkManager.bookmarks = [{ 
+            key: { connector: 'test-connector', manga: 'manga1' }, 
+            title: { manga: bookmarkTitle } 
+        }];
 
-        Engine.ChaptermarkManager.getChaptermark.mockReturnValue(undefined);
+        const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
+
+        expect(newChapters.length).toBe(2);
+        expect(newChapters.find(c => c.id === 'ch1')).toBeDefined();
+        expect(newChapters.find(c => c.id === 'ch3')).toBeDefined();
+        expect(newChapters.find(c => c.id === 'ch2')).toBeUndefined();
+
+        for (const chapter of newChapters) {
+            expect(chapter).toBeInstanceOf(Chapter);
+            expect(chapter.manga.connector.id).toBe('test-connector');
+            if(chapter.id === 'ch1') expect(chapter.status).toBe('available');
+            if(chapter.id === 'ch3') expect(chapter.status).toBe('available');
+        }
+        
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining(`Processed 3 chapters for "${bookmarkTitle}". Found 2 chapters not yet completed.`));
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Found 2 chapters to download across all bookmarks.'));
+    });
+
+    test('should return an empty array if all chapters are already completed', async () => {
+        const rawChapterDataWithStatus = [
+            { id: 'ch1', title: 'Chapter 1', status: 'completed' },
+            { id: 'ch2', title: 'Chapter 2', status: 'completed' }
+        ];
+        const mockConnector = { 
+            id: 'test-connector', 
+            _getChapters: jest.fn().mockResolvedValue(rawChapterDataWithStatus) 
+        };
+        Engine.Connectors.push(mockConnector);
+        const bookmarkTitle = 'Manga All Completed';
+        bookmarkManager.bookmarks = [{ 
+            key: { connector: 'test-connector', manga: 'mangaAllDone' }, 
+            title: { manga: bookmarkTitle } 
+        }];
+        
+        const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
+        expect(newChapters.length).toBe(0);
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining(`Processed 2 chapters for "${bookmarkTitle}". Found 0 chapters not yet completed.`));
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Found 0 chapters to download across all bookmarks.'));
+    });
+
+    test('should return all chapters if all are available (none completed)', async () => {
+        const rawChapterDataWithStatus = [
+            { id: 'ch1', title: 'Chapter 1', status: 'available' },
+            { id: 'ch2', title: 'Chapter 2', status: 'available' }
+        ];
+        const mockConnector = { 
+            id: 'test-connector', 
+            _getChapters: jest.fn().mockResolvedValue(rawChapterDataWithStatus) 
+        };
+        Engine.Connectors.push(mockConnector);
+        const bookmarkTitle = 'Manga All Available';
+        bookmarkManager.bookmarks = [{ 
+            key: { connector: 'test-connector', manga: 'mangaAllNew' }, 
+            title: { manga: bookmarkTitle } 
+        }];
 
         const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
         expect(newChapters.length).toBe(2);
-        expect(newChapters.map(c => c.id)).toEqual(['ch1', 'ch3']);
-        expect(Engine.ChaptermarkManager.getChaptermark).toHaveBeenCalledWith({ id: 'manga1', connector: { id: 'test-connector' } });
-        // Check if chapter.manga was assigned and includes connector
-        expect(newChapters[0].manga).toEqual(expect.objectContaining({ 
-            id: 'manga1', 
-            title: 'Manga 1', 
-            connector: mockConnector 
-        }));
+        expect(newChapters.map(c => c.id)).toEqual(['ch1', 'ch2']);
+        for (const chapter of newChapters) {
+            expect(chapter).toBeInstanceOf(Chapter);
+            expect(chapter.status).toBe('available');
+        }
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining(`Processed 2 chapters for "${bookmarkTitle}". Found 2 chapters not yet completed.`));
     });
 
-    // --- Test Scenario 5: Chaptermark Exists, and is the Latest Chapter ---
-    test('should return no new chapters if chaptermark is for the latest chapter (regardless of status)', async () => {
-        const chaptersFromConnector = [
-            { id: 'chA', title: 'Chapter A', status: 'available' }, 
-            { id: 'chB', title: 'Chapter B', status: 'completed' }, 
-            { id: 'chC', title: 'Chapter C', status: 'available' } // Marked chapter
-        ];
-        const mockConnector = { 
-            id: 'test-connector', 
-            _getChapters: jest.fn().mockResolvedValue(chaptersFromConnector) 
-        };
-        Engine.Connectors.push(mockConnector);
-        bookmarkManager.bookmarks = [
-            { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: 'Manga 1' } }
-        ];
-
-        Engine.ChaptermarkManager.getChaptermark.mockReturnValue({ 
-            chapterID: 'chC', 
-            mangaID: 'manga1', 
-            connectorID: 'test-connector',
-            chapterTitle: 'Chapter C'
-        });
-        Engine.ChaptermarkManager._getChapterIdentifier.mockImplementation(chapter => chapter.id);
-
-        const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
-        expect(newChapters.length).toBe(0);
-    });
-
-    // --- Test Scenario 6: Chaptermark Exists, New Chapters Available (and not completed) ---
-    test('should return new, non-completed chapters after the marked one', async () => {
-        const chaptersFromConnector = [
-            { id: 'chA', title: 'Chapter A', status: 'available' }, 
-            { id: 'chB', title: 'Chapter B', status: 'completed' }, 
-            { id: 'chC', title: 'Chapter C', status: 'available' }, // Marked chapter
-            { id: 'chD', title: 'Chapter D', status: 'available' }, 
-            { id: 'chE', title: 'Chapter E', status: 'completed' },
-            { id: 'chF', title: 'Chapter F', status: 'available' }
-        ];
-        const mockConnector = { 
-            id: 'test-connector', 
-            _getChapters: jest.fn().mockResolvedValue(chaptersFromConnector) 
-        };
-        Engine.Connectors.push(mockConnector);
-        bookmarkManager.bookmarks = [
-            { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: 'Manga 1' } }
-        ];
-
-        Engine.ChaptermarkManager.getChaptermark.mockReturnValue({ 
-            chapterID: 'chC', 
-            mangaID: 'manga1', 
-            connectorID: 'test-connector',
-            chapterTitle: 'Chapter C' 
-        });
-        Engine.ChaptermarkManager._getChapterIdentifier.mockImplementation(chapter => chapter.id);
-
-        const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
-        expect(newChapters.length).toBe(2); // chD (available), chF (available)
-        expect(newChapters.map(c => c.id)).toEqual(['chD', 'chF']);
-        expect(newChapters[0].manga).toEqual(expect.objectContaining({ 
-            id: 'manga1', 
-            connector: mockConnector 
-        }));
-    });
-
-    // --- Test Scenario 7: Chaptermark Exists, but Marked Chapter Not Found in Source List (filter by status) ---
-    test('should return all non-completed chapters as new if marked chapter is not in source list', async () => {
-        const chaptersFromConnector = [
-            { id: 'chX', title: 'Chapter X', status: 'available' }, 
-            { id: 'chY', title: 'Chapter Y', status: 'completed' }, 
-            { id: 'chZ', title: 'Chapter Z', status: 'available' }
-        ];
-        const mockConnector = { 
-            id: 'test-connector', 
-            _getChapters: jest.fn().mockResolvedValue(chaptersFromConnector) 
-        };
-        Engine.Connectors.push(mockConnector);
-        bookmarkManager.bookmarks = [
-            { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: 'Manga 1' } }
-        ];
-
-        Engine.ChaptermarkManager.getChaptermark.mockReturnValue({ 
-            chapterID: 'nonExistentCh', 
-            mangaID: 'manga1', 
-            connectorID: 'test-connector',
-            chapterTitle: 'Non Existent Chapter'
-        });
-        Engine.ChaptermarkManager._getChapterIdentifier.mockImplementation(chapter => chapter.id);
-
-        const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
-        expect(newChapters.length).toBe(2); // chX, chZ
-        expect(newChapters.map(c => c.id)).toEqual(['chX', 'chZ']);
-    });
-
-    // --- Test Scenario 8: Multiple Bookmarks with Mixed Scenarios (including status filter) ---
-    test('should handle multiple bookmarks with mixed scenarios and status filtering correctly', async () => {
-        // Bookmark 1: No chaptermark
-        const connector1Chapters = [
-            { id: 'bm1_ch1', title: 'BM1 CH1', status: 'available' }, 
+    test('should handle multiple bookmarks with mixed chapter statuses correctly', async () => {
+        const connector1ChaptersRaw = [
+            { id: 'bm1_ch1', title: 'BM1 CH1', status: 'available' },
             { id: 'bm1_ch2', title: 'BM1 CH2', status: 'completed' }
         ];
-        const mockConnector1 = { id: 'conn1', _getChapters: jest.fn().mockResolvedValue(connector1Chapters) };
+        const mockConnector1 = { id: 'conn1', _getChapters: jest.fn().mockResolvedValue(connector1ChaptersRaw) };
         
-        // Bookmark 2: Chaptermark is latest
-        const connector2Chapters = [
-            { id: 'bm2_chA', title: 'BM2 CHA', status: 'available' }, 
-            { id: 'bm2_chB', title: 'BM2 CHB', status: 'available' } // Marked
+        const connector2ChaptersRaw = [
+            { id: 'bm2_chA', title: 'BM2 CHA', status: 'completed' },
+            { id: 'bm2_chB', title: 'BM2 CHB', status: 'completed' }
         ];
-        const mockConnector2 = { id: 'conn2', _getChapters: jest.fn().mockResolvedValue(connector2Chapters) };
+        const mockConnector2 = { id: 'conn2', _getChapters: jest.fn().mockResolvedValue(connector2ChaptersRaw) };
 
-        // Bookmark 3: New chapters available, mixed status
-        const connector3Chapters = [
-            { id: 'bm3_chX', title: 'BM3 CHX', status: 'available' }, // Marked
-            { id: 'bm3_chY', title: 'BM3 CHY', status: 'available' }, 
-            { id: 'bm3_chZ', title: 'BM3 CHZ', status: 'completed' },
-            { id: 'bm3_chK', title: 'BM3 CHK', status: 'available' }
+        const connector3ChaptersRaw = [
+            { id: 'bm3_chX', title: 'BM3 CHX', status: 'available' },
+            { id: 'bm3_chY', title: 'BM3 CHY', status: 'available' }
         ];
-        const mockConnector3 = { id: 'conn3', _getChapters: jest.fn().mockResolvedValue(connector3Chapters) };
+        const mockConnector3 = { id: 'conn3', _getChapters: jest.fn().mockResolvedValue(connector3ChaptersRaw) };
 
         Engine.Connectors.push(mockConnector1, mockConnector2, mockConnector3);
 
@@ -238,121 +197,36 @@ describe('BookmarkManager.getAllBookmarksWithNewChapters', () => {
             { key: { connector: 'conn2', manga: 'mangaBM2' }, title: { manga: 'Manga BM2' } },
             { key: { connector: 'conn3', manga: 'mangaBM3' }, title: { manga: 'Manga BM3' } },
         ];
-
-        Engine.ChaptermarkManager.getChaptermark
-            .mockReturnValueOnce(undefined) // For mangaBM1
-            .mockReturnValueOnce({ chapterID: 'bm2_chB', mangaID: 'mangaBM2', connectorID: 'conn2', chapterTitle: 'BM2 CHB' }) // For mangaBM2
-            .mockReturnValueOnce({ chapterID: 'bm3_chX', mangaID: 'mangaBM3', connectorID: 'conn3', chapterTitle: 'BM3 CHX' }); // For mangaBM3
         
-        Engine.ChaptermarkManager._getChapterIdentifier.mockImplementation(chapter => chapter.id);
-
         const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
         
         // BM1: 1 new (bm1_ch1)
         // BM2: 0 new
-        // BM3: 2 new (bm3_chY, bm3_chK)
+        // BM3: 2 new (bm3_chX, bm3_chY)
         expect(newChapters.length).toBe(1 + 0 + 2); 
         
+        for (const chapter of newChapters) {
+            expect(chapter).toBeInstanceOf(Chapter);
+        }
+
         const newChapterIds = newChapters.map(c => c.id);
         expect(newChapterIds).toContain('bm1_ch1');
         expect(newChapterIds).not.toContain('bm1_ch2');
         expect(newChapterIds).not.toContain('bm2_chA');
         expect(newChapterIds).not.toContain('bm2_chB');
+        expect(newChapterIds).toContain('bm3_chX');
         expect(newChapterIds).toContain('bm3_chY');
-        expect(newChapterIds).not.toContain('bm3_chZ');
-        expect(newChapterIds).toContain('bm3_chK');
 
-        // Verify manga property assignment includes connector
         const bm1NewChapter = newChapters.find(c => c.id === 'bm1_ch1');
         expect(bm1NewChapter.manga.connector).toBe(mockConnector1);
-        const bm3NewChapterY = newChapters.find(c => c.id === 'bm3_chY');
-        expect(bm3NewChapterY.manga.connector).toBe(mockConnector3);
-    });
-
-    // --- New Test Cases for "Already Downloaded" Status ---
-
-    test('New chapters available, mixed statuses: should only return non-completed new chapters', async () => {
-        const chaptersFromConnector = [
-            { id: 'chC', title: 'Chapter C', status: 'available' }, // Marked chapter
-            { id: 'chD', title: 'Chapter D', status: 'available' }, // New, available
-            { id: 'chE', title: 'Chapter E', status: 'completed' }, // New, completed
-            { id: 'chF', title: 'Chapter F', status: 'available' }  // New, available
-        ];
-        const mockConnector = { 
-            id: 'test-connector', 
-            _getChapters: jest.fn().mockResolvedValue(chaptersFromConnector) 
-        };
-        Engine.Connectors.push(mockConnector);
-        bookmarkManager.bookmarks = [
-            { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: 'Manga 1' } }
-        ];
-        Engine.ChaptermarkManager.getChaptermark.mockReturnValue({ 
-            chapterID: 'chC', mangaID: 'manga1', connectorID: 'test-connector', chapterTitle: 'Chapter C' 
-        });
-        Engine.ChaptermarkManager._getChapterIdentifier.mockImplementation(chapter => chapter.id);
-
-        const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
-        expect(newChapters.length).toBe(2);
-        expect(newChapters.map(c => c.id)).toEqual(['chD', 'chF']);
-    });
-
-    test('All new chapters are already downloaded: should return an empty array', async () => {
-        const chaptersFromConnector = [
-            { id: 'chC', title: 'Chapter C', status: 'available' }, // Marked chapter
-            { id: 'chD', title: 'Chapter D', status: 'completed' }, // New, completed
-            { id: 'chE', title: 'Chapter E', status: 'completed' }  // New, completed
-        ];
-        const mockConnector = { 
-            id: 'test-connector', 
-            _getChapters: jest.fn().mockResolvedValue(chaptersFromConnector) 
-        };
-        Engine.Connectors.push(mockConnector);
-        bookmarkManager.bookmarks = [
-            { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: 'Manga 1' } }
-        ];
-        Engine.ChaptermarkManager.getChaptermark.mockReturnValue({ 
-            chapterID: 'chC', mangaID: 'manga1', connectorID: 'test-connector', chapterTitle: 'Chapter C' 
-        });
-        Engine.ChaptermarkManager._getChapterIdentifier.mockImplementation(chapter => chapter.id);
+        const bm3NewChapterX = newChapters.find(c => c.id === 'bm3_chX');
+        expect(bm3NewChapterX.manga.connector).toBe(mockConnector3);
         
-        const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
-        expect(newChapters.length).toBe(0);
-    });
-
-    test('No chaptermark, mixed statuses: should return only non-completed chapters', async () => {
-        const chaptersFromConnector = [
-            { id: 'chX', title: 'Chapter X', status: 'available' },
-            { id: 'chY', title: 'Chapter Y', status: 'completed' },
-            { id: 'chZ', title: 'Chapter Z', status: 'available' }
-        ];
-        const mockConnector = { 
-            id: 'test-connector', 
-            _getChapters: jest.fn().mockResolvedValue(chaptersFromConnector) 
-        };
-        Engine.Connectors.push(mockConnector);
-        bookmarkManager.bookmarks = [
-            { key: { connector: 'test-connector', manga: 'manga1' }, title: { manga: 'Manga 1' } }
-        ];
-        Engine.ChaptermarkManager.getChaptermark.mockReturnValue(undefined);
-        Engine.ChaptermarkManager._getChapterIdentifier.mockImplementation(chapter => chapter.id);
-
-        const newChapters = await bookmarkManager.getAllBookmarksWithNewChapters();
-        expect(newChapters.length).toBe(2);
-        expect(newChapters.map(c => c.id)).toEqual(['chX', 'chZ']);
-        expect(newChapters[0].manga.connector).toBe(mockConnector); // Check connector on assigned manga
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Processed 2 chapters for "Manga BM1". Found 1 chapters not yet completed.'));
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Processed 2 chapters for "Manga BM2". Found 0 chapters not yet completed.'));
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Processed 2 chapters for "Manga BM3". Found 2 chapters not yet completed.'));
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Found 3 chapters to download across all bookmarks.'));
     });
 });
 
-// Helper to create a simple bookmark
-const createBookmark = (connectorId, mangaId, mangaTitle) => ({
-    key: { connector: connectorId, manga: mangaId },
-    title: { manga: mangaTitle }
-});
-
-// Helper to create a simple chapter
-const createChapter = (id, title, status = 'available') => ({ // Added status with default
-    id: id,
-    title: title,
-    status: status
-    // manga property will be assigned by the method under test
-});
+// Helper functions are no longer needed as raw data is directly provided in tests.

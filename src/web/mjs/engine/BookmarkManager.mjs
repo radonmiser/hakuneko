@@ -1,4 +1,5 @@
 import Bookmark from './Bookmark.mjs';
+import Chapter from './Chapter.mjs'; // Added Import
 
 const events = {
     added: 'added',
@@ -236,57 +237,68 @@ export default class BookmarkManager extends EventTarget {
                 const mangaForConnector = { 
                     id: bookmark.key.manga, 
                     title: bookmark.title.manga,
-                    connector: connector // Add this
+                    connector: connector
                     // Potentially other fields like connector ID if chapter.manga needs full context,
                     // but usually Connector._getChapters sets up its chapter.manga references correctly.
                 };
-                const sourceChapters = await connector._getChapters(mangaForConnector);
+                const sourceChaptersRaw = await connector._getChapters(mangaForConnector); // Renamed to sourceChaptersRaw
 
-                if (sourceChapters && sourceChapters.length > 0) {
-                    const mangaIdentity = { id: bookmark.key.manga, connector: { id: bookmark.key.connector } };
-                    // Assuming Engine.ChaptermarkManager is available globally like Engine.Connectors
-                    const markedChapterDetails = Engine.ChaptermarkManager.getChaptermark(mangaIdentity);
-
-                    if (!markedChapterDetails) {
-                        // No chapter mark, all source chapters are new
-                        console.log(`No chaptermark for ${bookmark.title.manga}. Adding all ${sourceChapters.length} chapters as new.`);
-                        for (const chapter of sourceChapters) {
-                            if (!chapter.manga) { // Ensure manga reference is set
-                                chapter.manga = mangaForConnector;
-                            }
-                            // Condition: chapter.status !== 'completed'
-                            if (chapter.status !== 'completed') {
-                                allNewChapters.push(chapter);
-                            }
+                if (sourceChaptersRaw && sourceChaptersRaw.length > 0) {
+                    const instantiatedChapters = sourceChaptersRaw.map(rawChapterData => {
+                        if (!rawChapterData || typeof rawChapterData.id === 'undefined' || typeof rawChapterData.title === 'undefined') {
+                            console.warn('Skipping chapter with missing id or title in bookmark processing for manga:', mangaForConnector.title, rawChapterData);
+                            return null;
                         }
-                    } else {
-                        // ChaptermarkManager._getChapterIdentifier(chapter) is used internally by ChaptermarkManager
-                        // to get a consistent ID (e.g. chapter.id.hash or chapter.id).
-                        // markedChapterDetails.chapterID is the stored ID.
-                        // Also, comparing titles as a fallback, similar to isChapterMarked logic.
-                        let markedChapterIndex = sourceChapters.findIndex(sc => 
-                            Engine.ChaptermarkManager._getChapterIdentifier(sc) === markedChapterDetails.chapterID || 
-                            (sc.title && markedChapterDetails.chapterTitle && sc.title === markedChapterDetails.chapterTitle)
+                        // Let the Chapter constructor determine the initial status by calling updateStatus()
+                        // The Chapter constructor will also set chapter.manga = mangaForConnector
+                        return new Chapter(
+                            mangaForConnector,
+                            rawChapterData.id,
+                            rawChapterData.title,
+                            rawChapterData.language // Pass language if available, else undefined
+                            // rawChapterData.status // Passing undefined for status so Chapter constructor calls updateStatus()
                         );
+                    }).filter(chapter => chapter !== null); // Filter out any nulls from invalid raw data
 
-                        if (markedChapterIndex === -1) {
-                            console.warn(`Marked chapter (ID: ${markedChapterDetails.chapterID}, Title: ${markedChapterDetails.chapterTitle}) not found in source for ${bookmark.title.manga}. Considering all ${sourceChapters.length} chapters as new.`);
-                            for (const chapter of sourceChapters) {
-                                if (!chapter.manga) { chapter.manga = mangaForConnector; }
-                                // Condition: chapter.status !== 'completed'
+                    if (!instantiatedChapters || instantiatedChapters.length === 0) {
+                        console.log(`No valid chapters to process for bookmark '${bookmark.title.manga}' after instantiation.`);
+                        // continue to next bookmark effectively
+                    } else {
+                        const mangaIdentity = { id: bookmark.key.manga, connector: { id: bookmark.key.connector } };
+                        const markedChapterDetails = Engine.ChaptermarkManager.getChaptermark(mangaIdentity);
+
+                        if (!markedChapterDetails) {
+                            console.log(`No prior chaptermark found for "${bookmark.title.manga}". Considering all ${instantiatedChapters.length} source chapters as potential downloads.`);
+                            for (const chapter of instantiatedChapters) { // Use instantiatedChapters
+                                // No need for: if (!chapter.manga) { chapter.manga = mangaForConnector; }
                                 if (chapter.status !== 'completed') {
                                     allNewChapters.push(chapter);
                                 }
                             }
                         } else {
-                            console.log(`Marked chapter for ${bookmark.title.manga} found at index ${markedChapterIndex}. Adding subsequent chapters as new.`);
-                            for (let i = 0; i < sourceChapters.length; i++) {
-                                if (i > markedChapterIndex) {
-                                    const chapter = sourceChapters[i];
-                                    if (!chapter.manga) { chapter.manga = mangaForConnector; }
-                                    // Condition: chapter.status !== 'completed'
+                            // Use isChapterMarked for a more robust comparison if markedChapterDetails is a full mark object
+                            // isChapterMarked internally uses _getChapterIdentifier and also checks manga/connector IDs.
+                            let markedChapterIndex = instantiatedChapters.findIndex(sc => 
+                                Engine.ChaptermarkManager.isChapterMarked(sc, markedChapterDetails)
+                            );
+
+                            if (markedChapterIndex === -1) {
+                                console.warn(`Previously marked chapter (ID: ${markedChapterDetails.id}) for "${bookmark.title.manga}" not found in current source list. Considering all ${instantiatedChapters.length} source chapters as potential downloads.`);
+                                for (const chapter of instantiatedChapters) { // Use instantiatedChapters
+                                    // No need for: if (!chapter.manga) { chapter.manga = mangaForConnector; }
                                     if (chapter.status !== 'completed') {
                                         allNewChapters.push(chapter);
+                                    }
+                                }
+                            } else {
+                                console.log(`Marked chapter for ${bookmark.title.manga} found at index ${markedChapterIndex}. Adding subsequent chapters as new.`);
+                                for (let i = 0; i < instantiatedChapters.length; i++) { // Use instantiatedChapters
+                                    if (i > markedChapterIndex) {
+                                        const chapter = instantiatedChapters[i];
+                                        // No need for: if (!chapter.manga) { chapter.manga = mangaForConnector; }
+                                        if (chapter.status !== 'completed') {
+                                            allNewChapters.push(chapter);
+                                        }
                                     }
                                 }
                             }
