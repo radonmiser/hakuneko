@@ -42,6 +42,7 @@ module.exports = class CommandlineArgumentExtractor {
         console.log(' ', '                           ', 'Default: system\'s default');
         console.log(' ', '--user-directory=<DIR>     ', 'Directory where user settings are stored');
         console.log(' ', '                           ', 'Default: system\'s default');
+        console.log(' ', '-b, --update-bookmarks-and-download-new-chapters', 'Update all bookmarked manga and download new chapters.');
         console.log('');
     }
 
@@ -53,7 +54,8 @@ module.exports = class CommandlineArgumentExtractor {
             applicationUpdateURL:         this._get('--update-url') || this._get('-u'),
             applicationStartupURL:        this._get('--startup-url'),
             applicationCacheDirectory:    this._get('--cache-directory') || this._get('-c'),
-            applicationUserDataDirectory: this._get('--user-directory')
+            applicationUserDataDirectory: this._get('--user-directory'),
+            updateBookmarksAndDownloadNewChapters: this._get('--update-bookmarks-and-download-new-chapters', true) || this._get('-b', true)
         };
     }
 };
