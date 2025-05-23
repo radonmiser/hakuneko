@@ -16,6 +16,10 @@ export default class DownloadManager extends EventTarget {
      * Add a new job to the download queue.
      */
     addDownload( chapter ) {
+        if (!chapter || !chapter.manga || !chapter.manga.connector || !chapter.manga.connector.id) {
+            console.error('DownloadManager: Skipping chapter due to missing or invalid chapter.manga.connector.id details.', chapter);
+            return; // Skip adding this problematic chapter
+        }
         let manga = chapter.manga;
         let connector = manga.connector;
 

@@ -235,7 +235,8 @@ export default class BookmarkManager extends EventTarget {
                 // Provide title as well, as it can be useful for context or if chapter.manga needs it.
                 const mangaForConnector = { 
                     id: bookmark.key.manga, 
-                    title: bookmark.title.manga 
+                    title: bookmark.title.manga,
+                    connector: connector // Add this
                     // Potentially other fields like connector ID if chapter.manga needs full context,
                     // but usually Connector._getChapters sets up its chapter.manga references correctly.
                 };
@@ -253,7 +254,10 @@ export default class BookmarkManager extends EventTarget {
                             if (!chapter.manga) { // Ensure manga reference is set
                                 chapter.manga = mangaForConnector;
                             }
-                            allNewChapters.push(chapter);
+                            // Condition: chapter.status !== 'completed'
+                            if (chapter.status !== 'completed') {
+                                allNewChapters.push(chapter);
+                            }
                         }
                     } else {
                         // ChaptermarkManager._getChapterIdentifier(chapter) is used internally by ChaptermarkManager
@@ -269,7 +273,10 @@ export default class BookmarkManager extends EventTarget {
                             console.warn(`Marked chapter (ID: ${markedChapterDetails.chapterID}, Title: ${markedChapterDetails.chapterTitle}) not found in source for ${bookmark.title.manga}. Considering all ${sourceChapters.length} chapters as new.`);
                             for (const chapter of sourceChapters) {
                                 if (!chapter.manga) { chapter.manga = mangaForConnector; }
-                                allNewChapters.push(chapter);
+                                // Condition: chapter.status !== 'completed'
+                                if (chapter.status !== 'completed') {
+                                    allNewChapters.push(chapter);
+                                }
                             }
                         } else {
                             console.log(`Marked chapter for ${bookmark.title.manga} found at index ${markedChapterIndex}. Adding subsequent chapters as new.`);
@@ -277,7 +284,10 @@ export default class BookmarkManager extends EventTarget {
                                 if (i > markedChapterIndex) {
                                     const chapter = sourceChapters[i];
                                     if (!chapter.manga) { chapter.manga = mangaForConnector; }
-                                    allNewChapters.push(chapter);
+                                    // Condition: chapter.status !== 'completed'
+                                    if (chapter.status !== 'completed') {
+                                        allNewChapters.push(chapter);
+                                    }
                                 }
                             }
                         }
