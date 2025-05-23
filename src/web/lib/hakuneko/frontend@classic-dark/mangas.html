@@ -93,6 +93,8 @@
                     <td width="1">
                         <input id="paste" />
                         <i class="fas fa-fw fa-paste button" on-click="onPasteClick" title="Click to paste manga links from the clipboard (CTRL + V)"></i>
+                        &nbsp;
+                        <i id="downloadAllNewChaptersButton" class="fas fa-fw fa-cloud-download-alt button" on-click="onDownloadAllNewChaptersClick" title="Download all new chapters from bookmarked manga"></i>
                     </td>
                 </tr>
             </table>
@@ -338,6 +340,27 @@
                 if(true/*clipboard seems to have valid manga links*/) {
                     this.set('selectedConnector', clipboardConnector);
                     this.onUpdateMangaListClick(evt);
+                }
+            }
+
+            onDownloadAllNewChaptersClick(event) {
+                console.log('Attempting to download all new chapters from bookmarks...');
+                // Ensure Engine is available, which it should be in this context.
+                if (window.Engine && typeof window.Engine.updateBookmarksAndDownloadNewChapters === 'function') {
+                    window.Engine.updateBookmarksAndDownloadNewChapters()
+                        .then(() => {
+                            console.log('Update and download process for all bookmarks initiated.');
+                            // Optionally, show a user-friendly notification here if the UI framework supports it easily.
+                            // For now, console logs are sufficient.
+                        })
+                        .catch(error => {
+                            console.error('Error trying to download all new chapters:', error);
+                            // Optionally, show an error to the user.
+                            alert('An error occurred while trying to download new chapters. Check console for details.');
+                        });
+                } else {
+                    console.error('Engine.updateBookmarksAndDownloadNewChapters() function not found!');
+                    alert('Could not initiate download of new chapters: Core function not available.');
                 }
             }
         }
